@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_services.py:*)",
+      "Bash(timeout 5 python:*)",
+      "Bash(python:*)",
+      "Bash(uvicorn main:app:*)",
+      "Bash(curl:*)",
+      "Bash(mkdir:*)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)"
+    ]
+  }
+}

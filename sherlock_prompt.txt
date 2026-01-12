@@ -1,0 +1,68 @@
+#Objective
+Develop a web based app that parses images, extracts content using LLM , rephrases it , stores it in supabase, performs RAG by vectorizing raw content and exposes the content on a frontend REACT app for viewing 
+
+
+#Tech stack
+- React for frontend
+- Python for backend
+- Database - supabase 
+- vector database - supabase 
+- LLMs - local or web based
+- API layer - Fast API
+- Hosting - Flyio
+
+
+#Special instructions
+##Backend code 
+ - Write modular code for backend and frontend 
+ - Organize backend code in separate folders api, utils, services, secrets, db, exceptions etc.
+ - Follow similar approach for REACT 
+ - Use a pleasing minimal UX adorned with icons using LUCIDE REACT
+ 
+
+
+#High level work items
+## Work item 1 - Image ingestion
+- Support single image as well as image folders
+- Single image url could be a web url or a google drive share link
+- image folders could be google drive folders or local folders
+
+## Work item 2 - Image parsing
+- The images should be read one by one and sent to a VLLM asking it to parse it, extract the content and return textual data 
+- The LLM should be asked to categorize and subcategorize the content based on configurable parameters (which will come from supabase table - 'Config' stored as JSON against a key 'tags')
+- LLM's need to be configurable as well and could use web based (openAI, claude, gemini) or local LLMs.(which will come from supabase table - 'Config' stored as JSON against a key 'llms')
+- The raw extracted content should be paraphrased by the LLM. LLM will also return a short title for this content
+- The entire data along with image should be stored in a supabase table 'Knowledge' (separate columns will be there like Category, Subcategory, Raw data, title, Paraphrased data, Image, url, status)
+
+
+## Work item 3 - Vectorize content 
+- The system should vectorize the *Raw data*  and store it in supabase 
+- Metadata should also be stored which will be the image url, category and sub category tags
+
+
+## Work item 4 - Visualization
+### The *Paraphrased data*, *title*, *image* should be displayed to the user via a frontend React app
+### The user interface should be a 3 column layout with follwing details
+    - header with anme 'Sherlock' with proper icons  
+	- left pane - a tree like navigation organized as *categories* and *subcategories*. On clicking them appropriate filters will be applied along with pagination and data fetched from supabase and shown
+	- central (main pane) - this will show in a grid like manner all the correspong images (small image view) alonmg with title. 
+	- On clicking the small image a pop-up will open showing the image fully along with the assigned title , along with 2 columns underneath it . These columns will be *Raw data*  and *Paraphrased data*
+
+
+## Work item 5 - API layer
+### Expose an api endpoint for ingestion /vectroization phase that will take below parameters 
+    -Folder type - local/google drive
+    -Folder location - <url> or <path>
+    -Image url - <weburl> pr <shared google drive link> 	
+	-llm_type - local or web
+	-llm - default GPT 5.2 other options Claude opus 4.5, Google Gemini 3.0 flash or local
+	
+	
+### Expose another api endpoint that will take below parameters for Vusialization phase
+    -category - <name> or default "All'
+	-subcategory - <name> or default "All'
+	-page_size - <no of records to be shown E.g. 10,20, 50 etc.>  Default 20
+	
+   	
+### Expose another api endpoint that will take expose an MCP server with SSE support that will take the user query and perform RAG on it using the Supabase vector search and return the response 
+   -query - the user query
