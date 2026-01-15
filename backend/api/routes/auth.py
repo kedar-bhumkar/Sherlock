@@ -1,9 +1,11 @@
-"""Authentication API routes for Google Drive."""
+"""Authentication API routes for Google Drive and TOTP."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, Field
+from typing import Optional
 
 from services.google_drive_service import get_drive_service
+from services.totp_service import get_totp_service
 
 router = APIRouter()
 
@@ -198,3 +200,154 @@ async def revoke_google_auth() -> AuthenticateResponse:
             status_code=500,
             detail=f"Failed to revoke token: {e}",
         )
+
+
+# =============================================================================
+# TOTP Authentication Endpoints
+# =============================================================================
+
+
+class TOTPVerifyRequest(BaseModel):
+    """Request for TOTP verification."""
+
+    code: str = Field(..., description="The 6-digit TOTP code", min_length=6, max_length=6)
+
+
+class TOTPVerifyResponse(BaseModel):
+    """Response after TOTP verification."""
+
+    success: bool = Field(..., description="Whether verification succeeded")
+    token: Optional[str] = Field(None, description="Session token if verification succeeded")
+    message: str = Field(..., description="Status message")
+
+
+class TOTPStatusResponse(BaseModel):
+    """Response for TOTP status check."""
+
+    enabled: bool = Field(..., description="Whether TOTP authentication is enabled")
+    configured: bool = Field(..., description="Whether TOTP secret is configured")
+
+
+class SessionValidateResponse(BaseModel):
+    """Response for session validation."""
+
+    valid: bool = Field(..., description="Whether the session is valid")
+
+
+@router.get(
+    "/auth/totp/status",
+    response_model=TOTPStatusResponse,
+    summary="Check TOTP Auth Status",
+    description="Check if TOTP authentication is enabled and configured",
+)
+async def check_totp_status() -> TOTPStatusResponse:
+    """
+    Check the current TOTP authentication status.
+
+    Returns information about:
+    - Whether TOTP is enabled in configuration
+    - Whether a TOTP secret is configured
+    """
+    totp_service = get_totp_service()
+    settings = totp_service.settings
+
+    return TOTPStatusResponse(
+        enabled=settings.totp_enabled,
+        configured=bool(settings.totp_secret),
+    )
+
+
+@router.post(
+    "/auth/totp/verify",
+    response_model=TOTPVerifyResponse,
+    summary="Verify TOTP Code",
+    description="Verify a TOTP code and get a session token",
+)
+async def verify_totp(request: TOTPVerifyRequest) -> TOTPVerifyResponse:
+    """
+    Verify a TOTP code from an authenticator app.
+
+    If verification succeeds, returns a session token for subsequent requests.
+    The token is valid for 1 hour.
+    """
+    totp_service = get_totp_service()
+
+    # Check if TOTP is configured
+    if not totp_service.enabled:
+        return TOTPVerifyResponse(
+            success=True,
+            token=None,
+            message="TOTP authentication is disabled",
+        )
+
+    # Verify the code
+    if not totp_service.verify_code(request.code):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid TOTP code",
+        )
+
+    # Generate session token
+    token = totp_service.generate_session_token()
+
+    return TOTPVerifyResponse(
+        success=True,
+        token=token,
+        message="Authentication successful",
+    )
+
+
+@router.post(
+    "/auth/session/validate",
+    response_model=SessionValidateResponse,
+    summary="Validate Session",
+    description="Check if a session token is valid",
+)
+async def validate_session(
+    authorization: Optional[str] = Header(None, description="Bearer token")
+) -> SessionValidateResponse:
+    """
+    Validate a session token.
+
+    Pass the token in the Authorization header as "Bearer <token>".
+    """
+    totp_service = get_totp_service()
+
+    # If TOTP is disabled, always return valid
+    if not totp_service.enabled:
+        return SessionValidateResponse(valid=True)
+
+    # Extract token from header
+    if not authorization or not authorization.startswith("Bearer "):
+        return SessionValidateResponse(valid=False)
+
+    token = authorization[7:]  # Remove "Bearer " prefix
+    is_valid = totp_service.validate_session_token(token)
+
+    return SessionValidateResponse(valid=is_valid)
+
+
+@router.post(
+    "/auth/logout",
+    response_model=AuthenticateResponse,
+    summary="Logout",
+    description="Invalidate the current session",
+)
+async def logout(
+    authorization: Optional[str] = Header(None, description="Bearer token")
+) -> AuthenticateResponse:
+    """
+    Logout by invalidating the current session token.
+
+    Pass the token in the Authorization header as "Bearer <token>".
+    """
+    totp_service = get_totp_service()
+
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+        totp_service.invalidate_session(token)
+
+    return AuthenticateResponse(
+        success=True,
+        message="Logged out successfully",
+    )

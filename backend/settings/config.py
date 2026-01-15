@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # Feature flags
     use_mock: bool = False  # Set to True to use mock implementations
 
+    # MCP Authentication
+    mcp_bearer_token: str = ""  # Required for MCP API access
+
+    # TOTP Authentication
+    totp_secret: str = ""  # Base32 secret for TOTP (generate with pyotp.random_base32())
+    totp_enabled: bool = True  # Enable/disable TOTP authentication
+    totp_valid_window: int = 1  # Allow codes from ±1 time window (30 seconds each)
+    session_secret: str = "change-me-in-production"  # Secret for signing session tokens
+
     # Application
     debug: bool = False
 

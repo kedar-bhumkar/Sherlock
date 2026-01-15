@@ -70,3 +70,19 @@ export interface ApiError {
   message: string;
   status?: number;
 }
+
+// Auth Types
+export interface TOTPVerifyResponse {
+  success: boolean;
+  token: string | null;
+  message: string;
+}
+
+export interface TOTPStatusResponse {
+  enabled: boolean;
+  configured: boolean;
+}
+
+export interface SessionValidateResponse {
+  valid: boolean;
+}

@@ -1,8 +1,11 @@
 """Google Drive service using credentials.json and token.pickle for authentication."""
 
+import base64
 import io
+import json
 import os
 import pickle
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +18,9 @@ from googleapiclient.http import MediaIoBaseDownload
 from settings.config import get_settings
 from utils.retry_utils import with_retry, RetryConfig
 from exceptions.ingestion_exceptions import ImageDownloadError
+
+# Get the backend directory (parent of services/)
+BACKEND_DIR = Path(__file__).parent.parent.resolve()
 
 
 # OAuth 2.0 scopes for Google Drive
@@ -61,12 +67,28 @@ class GoogleDriveService:
             token_path: Path to token.pickle (defaults to settings)
         """
         self.settings = get_settings()
-        self._credentials_path = credentials_path or self.settings.google_drive_credentials_path
-        self._token_path = token_path or self.settings.google_drive_token_path
+
+        # Check for base64-encoded credentials in environment (for Fly.io/Docker)
+        self._credentials_from_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        self._token_from_env = os.environ.get("GOOGLE_TOKEN_PICKLE")
+
+        # Resolve paths relative to backend directory if they're not absolute
+        creds_path = credentials_path or self.settings.google_drive_credentials_path
+        token_path_val = token_path or self.settings.google_drive_token_path
+
+        # Make paths absolute relative to backend directory
+        self._credentials_path = str(BACKEND_DIR / creds_path) if not Path(creds_path).is_absolute() else creds_path
+        self._token_path = str(BACKEND_DIR / token_path_val) if not Path(token_path_val).is_absolute() else token_path_val
+
         self._service = None
         self._credentials = None
+        self._temp_credentials_file = None
 
-        print(f"[GoogleDrive] Initialized with credentials_path={self._credentials_path}, token_path={self._token_path}")
+        if self._credentials_from_env:
+            print("[GoogleDrive] Initialized with credentials from GOOGLE_CREDENTIALS_JSON env var")
+        else:
+            print(f"[GoogleDrive] Initialized with credentials_path={self._credentials_path}")
+        print(f"[GoogleDrive] Token path={self._token_path}")
 
     @property
     def credentials_path(self) -> Path:
@@ -79,10 +101,34 @@ class GoogleDriveService:
         return Path(self._token_path)
 
     def is_configured(self) -> bool:
-        """Check if credentials.json exists."""
+        """Check if credentials.json exists or is provided via environment."""
+        if self._credentials_from_env:
+            print("[GoogleDrive] is_configured: YES - credentials from environment")
+            return True
         exists = self.credentials_path.exists()
         print(f"[GoogleDrive] is_configured: credentials.json exists={exists} at {self.credentials_path}")
         return exists
+
+    def _get_credentials_file_path(self) -> str:
+        """Get path to credentials file, creating temp file from env if needed."""
+        if self._credentials_from_env:
+            if self._temp_credentials_file is None:
+                # Decode base64 and write to temp file
+                try:
+                    creds_json = base64.b64decode(self._credentials_from_env).decode('utf-8')
+                    # Validate it's valid JSON
+                    json.loads(creds_json)
+                    # Create temp file
+                    fd, path = tempfile.mkstemp(suffix='.json', prefix='google_creds_')
+                    with os.fdopen(fd, 'w') as f:
+                        f.write(creds_json)
+                    self._temp_credentials_file = path
+                    print(f"[GoogleDrive] Created temp credentials file at {path}")
+                except Exception as e:
+                    print(f"[GoogleDrive] ERROR decoding GOOGLE_CREDENTIALS_JSON: {e}")
+                    raise ValueError(f"Invalid GOOGLE_CREDENTIALS_JSON: {e}")
+            return self._temp_credentials_file
+        return self._credentials_path
 
     def is_authenticated(self) -> bool:
         """Check if valid token exists."""
@@ -172,7 +218,7 @@ class GoogleDriveService:
         """
         print(f"[GoogleDrive] authenticate: starting, headless={headless}")
 
-        if not self.credentials_path.exists():
+        if not self.is_configured():
             print(f"[GoogleDrive] authenticate: ERROR - credentials.json not found at {self.credentials_path}")
             raise FileNotFoundError(
                 f"credentials.json not found at {self.credentials_path}. "
@@ -181,9 +227,18 @@ class GoogleDriveService:
 
         creds = None
 
-        # Load existing token
-        if self.token_path.exists():
-            print("[GoogleDrive] authenticate: loading existing token")
+        # Load existing token from env or file
+        if self._token_from_env:
+            print("[GoogleDrive] authenticate: loading token from GOOGLE_TOKEN_PICKLE env var")
+            try:
+                token_bytes = base64.b64decode(self._token_from_env)
+                creds = pickle.loads(token_bytes)
+                print("[GoogleDrive] authenticate: token loaded from env")
+            except Exception as e:
+                print(f"[GoogleDrive] authenticate: failed to load token from env: {e}")
+                creds = None
+        elif self.token_path.exists():
+            print("[GoogleDrive] authenticate: loading existing token from file")
             creds = self._load_token()
 
         # If no valid credentials, authenticate
@@ -204,12 +259,14 @@ class GoogleDriveService:
                     print("[GoogleDrive] authenticate: ERROR - headless mode, cannot open browser")
                     raise RuntimeError(
                         "Authentication required but running in headless mode. "
-                        "Run authenticate() interactively first to generate token.pickle."
+                        "Run authenticate() interactively first to generate token.pickle, "
+                        "then set GOOGLE_TOKEN_PICKLE env var with base64-encoded token."
                     )
 
                 print("[GoogleDrive] authenticate: starting OAuth flow (opening browser)...")
+                creds_file = self._get_credentials_file_path()
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    str(self.credentials_path),
+                    creds_file,
                     SCOPES,
                 )
                 creds = flow.run_local_server(port=0)

@@ -1,6 +1,6 @@
-import { API_BASE_URL } from '../utils/constants';
+import { API_BASE_URL, AUTH_TOKEN_KEY } from '../utils/constants';
 import { buildQueryParams } from '../utils/helpers';
-import { KnowledgeResponse, ApiError, Category, TagsConfig } from '../types';
+import { KnowledgeResponse, ApiError, TagsConfig, TOTPVerifyResponse, TOTPStatusResponse, SessionValidateResponse } from '../types';
 
 /**
  * Base fetch wrapper with error handling
@@ -124,4 +124,83 @@ export const ingestImages = async (params: IngestParams): Promise<any> => {
  */
 export const getTags = async (): Promise<TagsConfig> => {
   return fetchWithErrorHandling<TagsConfig>(`${API_BASE_URL}/api/config/tags`);
+};
+
+// =============================================================================
+// Authentication API
+// =============================================================================
+
+/**
+ * Get the stored auth token
+ */
+export const getAuthToken = (): string | null => {
+  return sessionStorage.getItem(AUTH_TOKEN_KEY);
+};
+
+/**
+ * Set the auth token
+ */
+export const setAuthToken = (token: string): void => {
+  sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+};
+
+/**
+ * Clear the auth token
+ */
+export const clearAuthToken = (): void => {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+};
+
+/**
+ * Check TOTP authentication status
+ */
+export const getTOTPStatus = async (): Promise<TOTPStatusResponse> => {
+  return fetchWithErrorHandling<TOTPStatusResponse>(
+    `${API_BASE_URL}/api/auth/totp/status`
+  );
+};
+
+/**
+ * Verify TOTP code and get session token
+ */
+export const verifyTOTP = async (code: string): Promise<TOTPVerifyResponse> => {
+  return fetchWithErrorHandling<TOTPVerifyResponse>(
+    `${API_BASE_URL}/api/auth/totp/verify`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }
+  );
+};
+
+/**
+ * Validate current session token
+ */
+export const validateSession = async (): Promise<SessionValidateResponse> => {
+  const token = getAuthToken();
+  return fetchWithErrorHandling<SessionValidateResponse>(
+    `${API_BASE_URL}/api/auth/session/validate`,
+    {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  );
+};
+
+/**
+ * Logout and invalidate session
+ */
+export const logout = async (): Promise<void> => {
+  const token = getAuthToken();
+  try {
+    await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/auth/logout`,
+      {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }
+    );
+  } finally {
+    clearAuthToken();
+  }
 };
